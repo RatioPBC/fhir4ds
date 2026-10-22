@@ -1,0 +1,23 @@
+[tasks.setup]
+run = '''
+git submodule update --init --recursive
+'''
+
+[tasks.configure]
+run = '''
+cmake -DDUCKDB_EXTENSION_CONFIGS="{{ cwd }}/extension_config.cmake" \
+      -DCMAKE_BUILD_TYPE=Release -S ./duckdb/ -B build/release
+'''
+dir = "{{ cwd }}"
+
+[tasks.build]
+run = '''
+cmake --build build/release --config Release -j 8
+'''
+dir = "{{ cwd }}"
+
+[tasks.test]
+run = '''
+./build/release/test/unittest "*cql*"
+'''
+dir = "{{ cwd }}"
