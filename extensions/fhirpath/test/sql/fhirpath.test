@@ -1130,20 +1130,22 @@ SELECT fhirpath_bool('{"resourceType":"Observation"}', '1.round() is Integer');
 ----
 false
 
+# FP-11 SKEPTIC QA-001 (2026-08-17): §5.7 power — Integer base and exponent
+# yield an Integer (supersedes the earlier "power always returns Decimal" pin)
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '2.power(3)');
 ----
-8.0
+8
 
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '2.power(3).type().name');
 ----
-Decimal
+Integer
 
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '2.power(3).toString()');
 ----
-8.0
+8
 
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '3.14159.abs()');
@@ -1171,7 +1173,7 @@ query II
 SELECT fhirpath_text('{"resourceType":"Observation"}', '9223372036854775807L.round().toString()'),
        fhirpath_text('{"resourceType":"Observation"}', '9223372036854775807L.power(1).toString()');
 ----
-9223372036854775807.0	9223372036854775807.0
+9223372036854775807.0	9223372036854775807
 
 query III
 SELECT fhirpath_text('{"resourceType":"Observation"}', '9223372036854774785L.ceiling()'),
@@ -1417,6 +1419,8 @@ true
 
 # FP-13 SKEPTIC fresh rerun: string equivalence normalizes case and
 # individual whitespace code points without trimming or collapsing runs.
+# FP-13 HISTORIAN (2026-08-17): whitespace is only the Whitespace lexical
+# category (tab, LF, CR, space), so NBSP is not normalized.
 query IIIIIII
 SELECT fhirpath_bool('{"resourceType":"Observation","nbspLeft":"alpha\u00a0beta","spaceRight":"ALPHA beta"}', '''a  b'' ~ ''a b'''),
        fhirpath_bool('{"resourceType":"Observation","nbspLeft":"alpha\u00a0beta","spaceRight":"ALPHA beta"}', '''a  b'' !~ ''a b'''),
@@ -1426,7 +1430,7 @@ SELECT fhirpath_bool('{"resourceType":"Observation","nbspLeft":"alpha\u00a0beta"
        fhirpath_bool('{"resourceType":"Observation","nbspLeft":"alpha\u00a0beta","spaceRight":"ALPHA beta"}', 'nbspLeft ~ spaceRight'),
        fhirpath_bool('{"resourceType":"Observation","nbspLeft":"alpha\u00a0beta","spaceRight":"ALPHA beta"}', '''É'' ~ ''é''');
 ----
-false	true	false	true	true	true	true
+false	true	false	true	true	false	true
 
 # FP-13 SKEPTIC fresh rerun: multi-item resource Quantity equivalence uses unit semantics
 query I
@@ -1541,15 +1545,17 @@ SELECT fhirpath_is_valid('@2016 + 1 ''a''');
 ----
 false
 
+# FP-18 HISTORIAN QA-002 (2026-08-18): Time results never carry the leading
+# 'T' (§5.5.8 Time toString); the '@T' prefix is literal syntax only
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '@T12:34 + 30 seconds');
 ----
-T12:34
+12:34
 
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '@T00:00:00 - 1 millisecond');
 ----
-T00:00:00
+00:00:00
 
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '@2016-02-29 + 23 hours');
@@ -1616,10 +1622,11 @@ SELECT fhirpath_text('{"resourceType":"Observation"}', '1.2 * 1.8');
 ----
 2.16
 
+# FP-18 HISTORIAN QA-003: §6.6.2 division result is always Decimal
 query I
 SELECT fhirpath_text('{"resourceType":"Observation"}', '2 / 1 ''mg''');
 ----
-2 '1/mg'
+2.0 '1/mg'
 
 query I
 SELECT fhirpath_json('{"resourceType":"Observation"}', '2 / 1 ''mg''');
@@ -1659,7 +1666,7 @@ SELECT fhirpath_timestamp('{"resourceType":"Observation","effectiveDateTime":"20
 query I
 SELECT fhirpath_json('{"resourceType":"Observation","effectiveTime":"23:59:59.500"}', 'effectiveTime + 750 milliseconds');
 ----
-["T00:00:00.250"]
+["00:00:00.250"]
 
 # FP-19 SKEPTIC regression: delimited identifiers use FHIRPath string escapes
 query I
@@ -1694,30 +1701,18 @@ SELECT fhirpath_text('{"resourceType":"Patient"}', '%''vs-administrative-gender'
 ----
 http://hl7.org/fhir/ValueSet/administrative-gender
 
-query I
-SELECT fhirpath_is_valid('%unknown');
+# FP-20 SKEPTIC/HISTORIAN (2026-06-30, 2026-08-18): env-var existence is a
+# runtime concern — undefined env vars are syntactically valid but evaluate
+# to empty (no fabricated %vs-*/%ext-* URLs, no %factory/%terminologies)
+query II
+SELECT fhirpath_is_valid(e), fhirpath_text('{"resourceType":"Patient"}', e)
+FROM (VALUES ('%unknown'), ('%`vs-foo`'), ('%`ext-foo`'), ('%factory'), ('%terminologies')) t(e);
 ----
-false
-
-query I
-SELECT fhirpath_is_valid('%`vs-foo`');
-----
-false
-
-query I
-SELECT fhirpath_is_valid('%`ext-foo`');
-----
-false
-
-query I
-SELECT fhirpath_is_valid('%factory');
-----
-false
-
-query I
-SELECT fhirpath_is_valid('%terminologies');
-----
-false
+true	NULL
+true	NULL
+true	NULL
+true	NULL
+true	NULL
 
 query I
 SELECT fhirpath_bool('{"resourceType":"Patient","contact":[{"name":{"family":"Jones"}}]}', 'contact.is(BackboneElement)');
@@ -1869,15 +1864,16 @@ SELECT fhirpath_text('{"resourceType":"Bundle","entry":[{"resource":{"resourceTy
 ----
 5
 
-# FP-15 HISTORIAN regression: Section 6.3 is returns false for empty input,
-# while as keeps returning empty for empty input.
+# Section 6.3 is/as on empty input propagate empty (superseding the
+# FP-15 HISTORIAN 2026-06-12 "is returns false" pin); mirrors
+# test_type_parity.py::test_empty_input_is_returns_false_as_returns_empty.
 query IIII
 SELECT fhirpath_bool('{"resourceType":"Patient"}', 'missing is Integer'),
        fhirpath_bool('{"resourceType":"Patient"}', 'missing.is(Integer)'),
        fhirpath('{"resourceType":"Patient"}', 'missing as Integer'),
        fhirpath('{"resourceType":"Patient"}', 'missing.as(Integer)');
 ----
-false	false	[]	[]
+NULL	NULL	[]	[]
 
 query II
 SELECT fhirpath('{"resourceType":"Observation","status":"final"}', 'Observation.issued is instant'),
@@ -1906,9 +1902,17 @@ SELECT fhirpath_is_valid('a.first(0)') OR fhirpath_is_valid('a.last(0)') OR fhir
 false
 
 query I
-SELECT fhirpath_is_valid('a.skip()') OR fhirpath_is_valid('a.take()') OR fhirpath_is_valid('a.skip(1, 2)') OR fhirpath_is_valid('a.take(1, 2)') OR fhirpath_is_valid('a.skip(1.0)') OR fhirpath_is_valid('a.take(1.0)');
+SELECT fhirpath_is_valid('a.skip()') OR fhirpath_is_valid('a.take()') OR fhirpath_is_valid('a.skip(1, 2)') OR fhirpath_is_valid('a.take(1, 2)');
 ----
 false
+
+# FP-05 SKEPTIC (2026-08-17): wrong-typed count arguments are execution type
+# errors (valid expression, empty result), not syntax errors
+query II
+SELECT fhirpath_is_valid('a.skip(1.0)') AND fhirpath_is_valid('a.take(1.0)'),
+       fhirpath('{"resourceType":"Patient","a":[1,2,3]}', 'a.skip(1.0)');
+----
+true	[]
 
 query I
 SELECT fhirpath_is_valid('a.combine()') OR fhirpath_is_valid('a.union()') OR fhirpath_is_valid('a.intersect()') OR fhirpath_is_valid('a.exclude()') OR fhirpath_is_valid('a.union(b, ints)');
@@ -2076,12 +2080,21 @@ SELECT fhirpath_bool('{"resourceType":"Observation","truth":true,"falsity":false
 NULL	NULL
 
 query I
-SELECT fhirpath_is_valid('true > false') OR fhirpath_is_valid('(1 | 2) < 3') OR fhirpath_is_valid('1 < (2 | 3)');
+SELECT fhirpath_is_valid('(1 | 2) < 3') OR fhirpath_is_valid('1 < (2 | 3)');
 ----
 false
 
-# FP-14 SKEPTIC regression: calendar duration keywords and UCUM duration
-# codes above seconds are incomparable for Section 6.2 ordering.
+# FP-02 EXPLORER QA-003 (2026-08-16): Boolean ordering is an execution type
+# error (same class as `1 > true`), so the expression is valid
+query I
+SELECT fhirpath_is_valid('true > false');
+----
+true
+
+# FP-14 SKEPTIC regression: calendar year/month keywords and UCUM 'a'/'mo'
+# are incomparable for Section 6.2 ordering. FP-02 HISTORIAN QA-003
+# (2026-08-16): week/day/time keywords are exact seconds, so they order
+# against their UCUM codes (equal values -> `>` is false).
 query IIIIIII
 SELECT fhirpath_bool('{"resourceType":"Observation"}', '1 year > 1 ''a'''),
        fhirpath_bool('{"resourceType":"Observation"}', '1 month <= 1 ''mo'''),
@@ -2091,7 +2104,7 @@ SELECT fhirpath_bool('{"resourceType":"Observation"}', '1 year > 1 ''a'''),
        fhirpath_bool('{"resourceType":"Observation"}', '1 minute > 1 ''min'''),
        fhirpath_bool('{"resourceType":"Observation"}', '10 seconds > 1 ''s''');
 ----
-NULL	NULL	NULL	NULL	NULL	NULL	true
+NULL	NULL	false	false	false	false	true
 
 # FP-14 SKEPTIC fresh regression: Section 6.2 numeric and same-unit
 # Quantity ordering must preserve exact authored/JSON number text above
@@ -2178,7 +2191,8 @@ SELECT fhirpath_text('{"resourceType":"Patient","id":"p1","active":true}', 'defi
 NULL	false	NULL	false	NULL	false	NULL	false	NULL	false
 
 # FP-20 HISTORIAN regression: formal grammar hides whitespace/comments between
-# '%' and the external constant identifier/string.
+# '%' and the external constant identifier/string. An undefined env var is
+# still valid syntax (FP-20 runtime-not-syntax doctrine) and evaluates empty.
 query IIIIIIIIII
 SELECT fhirpath_text('{"resourceType":"Patient","id":"p1"}', '% ''ucum'''),
        fhirpath_is_valid('% ''ucum'''),
@@ -2195,7 +2209,7 @@ SELECT fhirpath_text('{"resourceType":"Patient","id":"p1"}', '% ''ucum'''),
        fhirpath_text('{"resourceType":"Patient","id":"p1"}', '% ''unknown'''),
        fhirpath_is_valid('% ''unknown''');
 ----
-http://unitsofmeasure.org	true	http://unitsofmeasure.org	true	http://unitsofmeasure.org	true	p1	true	NULL	false
+http://unitsofmeasure.org	true	http://unitsofmeasure.org	true	http://unitsofmeasure.org	true	p1	true	NULL	true
 
 # FP-20 EXPLORER regression: Section 10 reflection must use FHIR model
 # primitive metadata for resource-specific code fields, including
