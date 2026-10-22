@@ -17,7 +17,7 @@ require cql
 
 # Test AgeInYears
 query I
-SELECT AgeInYears('{"birthDate":"2000-01-15"}') > 0;
+SELECT TRY_CAST(AgeInYears('{"birthDate":"2000-01-15"}') AS INTEGER) > 0;
 ----
 true
 
@@ -107,10 +107,12 @@ SELECT weeksBetween('2024-01-01', '2024-01-15');
 2
 
 # DurationBetween with one coarser operand returns uncertainty, not scalar low boundary.
+# Duration caps the uncertain end at the requested precision (CQL Reference: Interval[0, 10]);
+# difference in months over the same operands is Interval[0, 11].
 query I
 SELECT cqlDurationBetween('2012-01-02', '2012', 'month');
 ----
-{"start":0,"end":11,"lowClosed":true,"highClosed":true}
+{"start":0,"end":10,"lowClosed":true,"highClosed":true}
 
 query I
 SELECT cqlDurationBetween('2005T', '2010T', 'year');
@@ -957,7 +959,7 @@ SELECT mathFloor('2.9');
 ----
 2
 
-# mathRound — CQL ties round toward positive infinity
+# mathRound — CQL half ties round away from zero (Round(-0.5) = -1)
 query I
 SELECT mathRound('2.5', '0');
 ----
@@ -971,12 +973,12 @@ SELECT mathRound('2.4', '0');
 query I
 SELECT mathRound('-2.5', '0');
 ----
--2
+-3
 
 query I
 SELECT mathRound('-2.55', '1');
 ----
--2.5
+-2.6
 
 # mathSqrt
 query I
@@ -1002,11 +1004,11 @@ SELECT mathLn('1');
 ----
 0
 
-# mathLn zero → error
-statement error
+# mathLn zero → NULL (CQL §16.12: unrepresentable result is null, not a run-time error)
+query I
 SELECT mathLn('0');
 ----
-Invalid Error
+NULL
 
 # mathLn negative → NULL
 query I
@@ -1782,11 +1784,11 @@ SELECT mathExp('0');
 ----
 1
 
-# mathExp: overflow → error
-statement error
+# mathExp: overflow → NULL (CQL §16.6: overflow is null, not a run-time error)
+query I
 SELECT mathExp('1000');
 ----
-Invalid Error
+NULL
 
 # mathLn: 1
 query I
@@ -1800,11 +1802,11 @@ SELECT mathLn('-1');
 ----
 NULL
 
-# mathLn: zero → error (negative infinity)
-statement error
+# mathLn: zero → NULL (negative infinity is unrepresentable, CQL §16.12)
+query I
 SELECT mathLn('0');
 ----
-Invalid Error
+NULL
 
 # mathSqrt: zero
 query I
@@ -1830,11 +1832,11 @@ SELECT mathPower('0', '5');
 ----
 0
 
-# mathRound: negative tie rounds toward positive infinity
+# mathRound: negative tie rounds away from zero
 query I
 SELECT mathRound('-2.5', '0');
 ----
--2
+-3
 
 # mathRound: positive with precision
 query I
@@ -2328,12 +2330,12 @@ NULL
 query I
 SELECT intervalFromBounds('{"value":1000,"unit":"mg"}','{"value":2,"unit":"g"}',true,true);
 ----
-{"low": {"value":1000,"unit":"mg"}, "high": {"value":2,"unit":"g"}, "lowClosed": true, "highClosed": true}
+{"low": {"value":1000.0,"unit":"mg","code":"mg","system":"http://unitsofmeasure.org"}, "high": {"value":2.0,"unit":"g","code":"g","system":"http://unitsofmeasure.org"}, "lowClosed": true, "highClosed": true}
 
 query I
 SELECT intervalIntersect(intervalFromBounds('{"value":1,"unit":"g"}','{"value":3,"unit":"g"}',true,true), intervalFromBounds('{"value":1500,"unit":"mg"}','{"value":2500,"unit":"mg"}',true,true));
 ----
-{"low": {"value":1500,"unit":"mg"}, "high": {"value":2500,"unit":"mg"}, "lowClosed": true, "highClosed": true}
+{"low": {"value":1500.0,"unit":"mg","code":"mg","system":"http://unitsofmeasure.org"}, "high": {"value":2500.0,"unit":"mg","code":"mg","system":"http://unitsofmeasure.org"}, "lowClosed": true, "highClosed": true}
 
 query I
 SELECT intervalEquivalent(NULL, NULL);
